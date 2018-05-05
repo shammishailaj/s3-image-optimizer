@@ -1,0 +1,7 @@
+{
+  "name": "aws-s3-image-optimiser",
+  "profile": "ImageOptimisation",
+  "regions": [
+    "eu-west-2"
+  ]
+}
