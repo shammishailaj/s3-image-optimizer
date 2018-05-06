@@ -83,9 +83,8 @@ func handler(ctx context.Context, s3Event events.S3Event) {
 		}
 
 	case ".png":
-		pngEncoder := &png.Encoder{
-			CompressionLevel: PngQuality,
-		}
+		var Enc png.Encoder
+		Enc.CompressionLevel = png.CompressionLevel(PngQuality)
 		err = png.Encode(finalImage, encodedImageDownloadedFromS3)
 		if err != nil {
 			fmt.Printf("Failed to encode, %v", err)
@@ -111,6 +110,7 @@ func handler(ctx context.Context, s3Event events.S3Event) {
 	})
 	if err != nil {
 		fmt.Printf("FAILED UPLOAD: %v", err)
+		fmt.Printf("Bucket: %s | Key: %s", Bucket, destinationKey)
 		return
 	}
 
