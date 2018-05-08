@@ -20,16 +20,18 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
+// TODO: Delete originalKey once upload has succeeded
+
 // SupportedFileTypes - The file extensions we accept and can process.
 var SupportedFileTypes = []string{".jpeg", ".jpg", ".png"}
 
-func inArray(v string, a []string) (ok bool, i int) {
-	for i = range a {
+func inArray(v string, a []string) (ok bool) {
+	for i := range a {
 		if ok = a[i] == v; ok {
 			return
 		}
 	}
-	return ok, i
+	return ok
 }
 
 func s3EventHandler(ctx context.Context, s3Event events.S3Event) (string, error) {
@@ -45,14 +47,30 @@ func s3EventHandler(ctx context.Context, s3Event events.S3Event) (string, error)
 		panic(err)
 	}
 
-	var originalKey = s3Event.Records[0].S3.Object.Key
-	destinationKey := strings.Replace(originalKey, fromBucket, toBucket, 1)
-	var fileExtension = filepath.Ext(originalKey)
+	sess := session.Must(session.NewSession())
+	svc := s3.New(sess)
 
-	// C
-	ok, _ := inArray(fileExtension, SupportedFileTypes)
+	downloader := s3manager.NewDownloader(sess)
+	uploader := s3manager.NewUploader(sess)
+
+	originalKey := s3Event.Records[0].S3.Object.Key
+	destinationKey := strings.Replace(originalKey, fromBucket, toBucket, 1)
+	fileExtension := filepath.Ext(originalKey)
+
+	ok := inArray(fileExtension, SupportedFileTypes)
 	if !ok {
-		fmt.Printf("The file type: " + fileExtension + " is not supported.")
+		fmt.Println("The file type: " + fileExtension + " is not supported. Moving instead of optimising image.")
+		_, err := svc.CopyObject(&s3.CopyObjectInput{
+			Bucket:     aws.String(bucket),
+			CopySource: aws.String(bucket + "/" + originalKey),
+			Key:        aws.String(destinationKey),
+		})
+
+		if err != nil {
+			return "", fmt.Errorf("Failed copying unsupported file: %v", err)
+		}
+
+		return originalKey, nil
 	}
 
 	var tmpImageDownload = "/tmp/optimized-image-download" + fileExtension
@@ -61,10 +79,6 @@ func s3EventHandler(ctx context.Context, s3Event events.S3Event) (string, error)
 	fmt.Printf("======================================\n")
 	fmt.Printf("Received Image: %v\n", originalKey)
 	fmt.Printf("Delivering Image To: %v\n", destinationKey)
-
-	sess := session.Must(session.NewSession())
-
-	downloader := s3manager.NewDownloader(sess)
 
 	// Create a file to write the S3 file to.
 	downloadedFromS3, err := os.Create(tmpImageDownload)
@@ -112,14 +126,13 @@ func s3EventHandler(ctx context.Context, s3Event events.S3Event) (string, error)
 
 	// Upload the compressed file to S3
 	//======================================
-	uploader := s3manager.NewUploader(sess)
 
 	f, err := os.Open(tmpImageUpload)
 	if err != nil {
 		return "", fmt.Errorf("failed to open file %q, %v", tmpImageUpload, err)
 	}
 
-	result, err := uploader.Upload(&s3manager.UploadInput{
+	_, err = uploader.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(destinationKey),
 		Body:   f,
@@ -128,17 +141,29 @@ func s3EventHandler(ctx context.Context, s3Event events.S3Event) (string, error)
 		return "", fmt.Errorf("FAILED UPLOAD: %v\nBucket: %s | Key: %s", err, bucket, destinationKey)
 	}
 
-	return result.Location, nil
+	return originalKey, nil
 }
 
 func handler(ctx context.Context, s3Event events.S3Event) {
-	location, err := s3EventHandler(ctx, s3Event)
+	bucket := os.Getenv("BUCKET")
+
+	originalKey, err := s3EventHandler(ctx, s3Event)
 	if err != nil {
 		fmt.Println(err)
+		return
 	}
 
-	fmt.Printf("SUCCESS UPLOAD: %s\n", location)
-	fmt.Printf("======================================\n")
+	svc := s3.New(session.New())
+
+	_, err = svc.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(originalKey),
+	})
+	if err != nil {
+		fmt.Printf("ERROR DELETING: %v\n", err)
+	}
+
+	fmt.Println("SUCCESS UPLOAD")
 }
 
 func main() {
