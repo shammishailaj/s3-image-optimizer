@@ -20,8 +20,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
-// TODO: Delete originalKey once upload has succeeded
-
 // SupportedFileTypes - The file extensions we accept and can process.
 var SupportedFileTypes = []string{".jpeg", ".jpg", ".png"}
 
@@ -57,6 +55,7 @@ func s3EventHandler(ctx context.Context, s3Event events.S3Event) (string, error)
 	destinationKey := strings.Replace(originalKey, fromBucket, toBucket, 1)
 	fileExtension := filepath.Ext(originalKey)
 
+	// Check that the file type uploaded can be optimised, otherwise we just move it and delete the original.
 	ok := inArray(fileExtension, SupportedFileTypes)
 	if !ok {
 		fmt.Println("The file type: " + fileExtension + " is not supported. Moving instead of optimising image.")
@@ -80,14 +79,13 @@ func s3EventHandler(ctx context.Context, s3Event events.S3Event) (string, error)
 	fmt.Printf("Received Image: %v\n", originalKey)
 	fmt.Printf("Delivering Image To: %v\n", destinationKey)
 
-	// Create a file to write the S3 file to.
+	// Create a temporary file to write the S3 file to.
 	downloadedFromS3, err := os.Create(tmpImageDownload)
 	if err != nil {
 		return "", fmt.Errorf("failed to create file %q, %v", tmpImageDownload, err)
 	}
 
 	// Download the file that triggered the function from S3.
-	//======================================
 	_, err = downloader.Download(downloadedFromS3, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(originalKey),
@@ -107,12 +105,12 @@ func s3EventHandler(ctx context.Context, s3Event events.S3Event) (string, error)
 		return "", fmt.Errorf("Error Opening tmpImageUpload File: %s", err)
 	}
 
-	// switch on extension jpg/jpeg or png
+	// Compress the image based off of the extension.
 	switch fileExtension {
 	case ".jpeg", ".jpg":
 		err = jpeg.Encode(finalImage, encodedImageDownloadedFromS3, &jpeg.Options{Quality: JPEGQuality})
 		if err != nil {
-			return "", fmt.Errorf("Failed to encode image: %v", err)
+			return "", fmt.Errorf("Failed to encode jpeg: %v", err)
 		}
 
 	case ".png":
@@ -120,13 +118,11 @@ func s3EventHandler(ctx context.Context, s3Event events.S3Event) (string, error)
 		Enc.CompressionLevel = png.CompressionLevel(PNGQuality)
 		err = png.Encode(finalImage, encodedImageDownloadedFromS3)
 		if err != nil {
-			return "", fmt.Errorf("Failed to encode, %v", err)
+			return "", fmt.Errorf("Failed to encode png: %v", err)
 		}
 	}
 
 	// Upload the compressed file to S3
-	//======================================
-
 	f, err := os.Open(tmpImageUpload)
 	if err != nil {
 		return "", fmt.Errorf("failed to open file %q, %v", tmpImageUpload, err)
@@ -145,15 +141,16 @@ func s3EventHandler(ctx context.Context, s3Event events.S3Event) (string, error)
 }
 
 func handler(ctx context.Context, s3Event events.S3Event) {
-	bucket := os.Getenv("BUCKET")
-
 	originalKey, err := s3EventHandler(ctx, s3Event)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
+	fmt.Println("SUCCESS UPLOAD")
 
 	svc := s3.New(session.New())
+
+	bucket := os.Getenv("BUCKET")
 
 	_, err = svc.DeleteObject(&s3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
@@ -162,8 +159,6 @@ func handler(ctx context.Context, s3Event events.S3Event) {
 	if err != nil {
 		fmt.Printf("ERROR DELETING: %v\n", err)
 	}
-
-	fmt.Println("SUCCESS UPLOAD")
 }
 
 func main() {
