@@ -27,15 +27,6 @@ var SupportedFileTypes = map[string]string{
 	".png":  "",
 }
 
-func inArray(v string, a []string) (ok bool) {
-	for i := range a {
-		if ok = a[i] == v; ok {
-			return
-		}
-	}
-	return ok
-}
-
 func s3EventHandler(ctx context.Context, s3Event events.S3Event) (string, error) {
 	bucket := os.Getenv("BUCKET")
 	fromBucket := os.Getenv("FROM_BUCKET")
@@ -60,7 +51,7 @@ func s3EventHandler(ctx context.Context, s3Event events.S3Event) (string, error)
 	fileExtension := filepath.Ext(originalKey)
 
 	// Check that the file type uploaded can be optimised, otherwise we just move it and delete the original.
-	if _, ok := SupportedFileTypes[fileExtension]; ok {
+	if _, ok := SupportedFileTypes[fileExtension]; !ok {
 		fmt.Println("The file type: " + fileExtension + " is not supported. Moving instead of optimising image.")
 		_, err := svc.CopyObject(&s3.CopyObjectInput{
 			Bucket:     aws.String(bucket),
